@@ -12,6 +12,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, WebDriverException
 import os # For environment variables, specifically to detect Streamlit Cloud environment
+import tempfile # For creating temporary directories for Selenium
 
 # --- Helper Functions for Scraping ---
 
@@ -30,21 +31,27 @@ def scrape_daraz(product_name):
         response.raise_for_status() # Raise an exception for HTTP errors
         soup = BeautifulSoup(response.content, 'html.parser')
 
-        # Selectors for Daraz based on your provided HTML structure
-        # Product card: div with class "Bm3ON"
-        # Product name: a tag inside a div with class "RfADt"
-        # Price: span with class "ooOxS"
-        # Link: href attribute of the product name a tag
+        # Refined Selectors for Daraz based on common patterns and your previous input
+        # It's crucial to verify these on the live site if issues persist.
+        # Look for a common product container like a div or li with a specific class.
+        # Then, locate the price, name, and link within that container.
 
-        # Find the first product card
-        product_card = soup.find('div', class_='Bm3ON')
+        # Attempt to find common product listing elements
+        # This is a common pattern for product cards on Daraz
+        product_card = soup.find('div', class_='Bm3ON') or \
+                       soup.find('div', class_='gridItem--Yd0sa') # Fallback if Bm3ON changes
+
         if product_card:
-            name_element = product_card.find('div', class_='RfADt').find('a')
-            price_element = product_card.find('span', class_='ooOxS')
+            # Try to find the name element, often an <a> tag within a specific div
+            name_element = product_card.find('div', class_='RfADt').find('a') if product_card.find('div', class_='RfADt') else \
+                           product_card.find('a', class_='product-card-link') # Fallback
+
+            # Try to find the price element, often a <span> with a price-related class
+            price_element = product_card.find('span', class_='ooOxS') or \
+                            product_card.find('span', class_='currency--G_q3k') # Fallback
 
             price = price_element.text if price_element else "N/A"
             name = name_element.text.strip() if name_element else "N/A"
-            # Daraz links are relative, so prepend the base URL
             product_url = "https:" + name_element['href'] if name_element and 'href' in name_element.attrs else search_url
 
             # Clean price string (remove currency symbols, commas, etc.)
@@ -83,41 +90,32 @@ def scrape_chaldal(product_name):
     options.add_argument('--disable-gpu') # Applicable for older systems or some cloud environments
     options.add_argument('--window-size=1920,1080') # Set a consistent window size
     options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
+    
+    # --- FIX FOR "session not created" ERROR ---
+    # Create a temporary directory for user data to avoid conflicts
+    temp_user_data_dir = tempfile.mkdtemp()
+    options.add_argument(f'--user-data-dir={temp_user_data_dir}')
+    # --- END FIX ---
 
     driver = None # Initialize driver to None for finally block
     try:
-        # Streamlit Cloud typically has chromedriver at /usr/bin/chromedriver
-        # For local development, you'd usually install webdriver_manager or place chromedriver in PATH.
-        # This conditional check helps adapt to the environment.
         if "STREAMLIT_SERVER_PORT" in os.environ:
-            # Running on Streamlit Cloud
             driver = webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=options)
         else:
-            # Running locally - assuming chromedriver is in PATH or current directory
-            # For robust local setup, consider `from webdriver_manager.chrome import ChromeDriverManager; driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)`
             driver = webdriver.Chrome(options=options)
 
         driver.get(search_url)
 
-        # Wait for the product card to be present. Adjust timeout as needed.
-        # Using a more specific selector if possible to ensure the content is loaded.
         WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, 'div.product'))
         )
 
-        # Get the page source after dynamic content has loaded
         soup = BeautifulSoup(driver.page_source, 'html.parser')
 
         # Selectors for Chaldal based on your provided HTML structure
-        # Product card: div with class "product"
-        # Product name: div with class "name"
-        # Price: div with class "discountedPrice" or "price" (prefer discounted if available)
-        # Link: a tag with class "btnShowDetails"
-
         product_card = soup.find('div', class_='product')
         if product_card:
             name_element = product_card.find('div', class_='name')
-            # Chaldal has both 'discountedPrice' and 'price'. Try to get the active/discounted one first.
             price_element = product_card.find('div', class_='discountedPrice') or product_card.find('div', class_='price')
             link_element = product_card.find('a', class_='btnShowDetails')
 
@@ -125,7 +123,6 @@ def scrape_chaldal(product_name):
             name = name_element.text.strip() if name_element else "N/A"
             product_url = "https://chaldal.com" + link_element['href'] if link_element and 'href' in link_element.attrs else search_url
 
-            # Clean price string (remove currency symbols, commas, etc.)
             clean_price = float(re.sub(r'[^\d.]', '', price.replace('৳', '').replace(',', ''))) if price != "N/A" else None
 
             return {
@@ -142,7 +139,7 @@ def scrape_chaldal(product_name):
         st.error("Chaldal: Page loading timed out. Product data might not have appeared within the given time.")
         return None
     except WebDriverException as e:
-        st.error(f"Chaldal: WebDriver error. This often means ChromeDriver is not correctly set up or accessible. Error: {e}")
+        st.error(f"Chaldal: WebDriver error. This often means ChromeDriver is not correctly set up or accessible or there's a configuration issue. Error: {e}")
         return None
     except Exception as e:
         st.error(f"An unexpected error occurred while scraping Chaldal: {e}")
@@ -150,6 +147,11 @@ def scrape_chaldal(product_name):
     finally:
         if driver:
             driver.quit() # Always close the browser to free up resources
+        # Clean up the temporary directory
+        if os.path.exists(temp_user_data_dir):
+            import shutil
+            shutil.rmtree(temp_user_data_dir)
+
 
 def scrape_swapno(product_name):
     """
@@ -166,17 +168,22 @@ def scrape_swapno(product_name):
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
 
-        # Selectors for Swapno based on your provided HTML structure
-        # Product card: div with class "product-box"
-        # Product name: a tag inside a div with class "product-box-title"
-        # Price: span with class "active-price"
-        # Link: href attribute of the product-box-gallery a tag
+        # Refined Selectors for Swapno based on common patterns and your previous input
+        # Look for a common product container like a div with a specific class.
+        # Then, locate the price, name, and link within that container.
 
-        product_card = soup.find('div', class_='product-box')
+        product_card = soup.find('div', class_='product-box') or \
+                       soup.find('div', class_='product-item') # Fallback if product-box changes
+
         if product_card:
-            name_element = product_card.find('div', class_='product-box-title').find('a')
-            price_element = product_card.find('span', class_='active-price')
-            link_element = product_card.find('a', class_='product-box-gallery') # Link is on the gallery/image wrapper
+            name_element = product_card.find('div', class_='product-box-title').find('a') if product_card.find('div', class_='product-box-title') else \
+                           product_card.find('a', class_='product-title') # Fallback
+
+            price_element = product_card.find('span', class_='active-price') or \
+                            product_card.find('span', class_='price') # Fallback
+
+            link_element = product_card.find('a', class_='product-box-gallery') or \
+                           product_card.find('a', class_='product-link') # Fallback
 
             price = price_element.text if price_element else "N/A"
             name = name_element.text.strip() if name_element else "N/A"
@@ -271,11 +278,12 @@ st.info(
 
     **Special Note for Chaldal (Selenium & Deployment):**
     Chaldal uses dynamic content loading, requiring Selenium. The `WebDriver error` you encountered
-    (`Status code 127`) on Streamlit Cloud means that the underlying system libraries required by
-    `chromedriver` are missing.
+    (`Status code 127` and `session not created`) means that the underlying system libraries required by
+    `chromedriver` are missing or there's a conflict in temporary user data directories.
 
     To make this work on Streamlit Cloud, you need to add a `packages.txt` file to your GitHub repository.
     This file tells Streamlit Cloud to install these necessary system packages.
+    The code has also been updated to use a unique temporary user data directory for each Selenium session.
     """
 )
 st.markdown(
@@ -305,3 +313,4 @@ st.markdown(
     8.  Click "Deploy!" and your app will be live and free.
     """
 )
+
