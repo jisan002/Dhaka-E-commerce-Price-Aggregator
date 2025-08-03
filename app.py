@@ -11,7 +11,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, WebDriverException
-import os # For environment variables
+import os # For environment variables, specifically to detect Streamlit Cloud environment
 
 # --- Helper Functions for Scraping ---
 
@@ -30,10 +30,10 @@ def scrape_daraz(product_name):
         response.raise_for_status() # Raise an exception for HTTP errors
         soup = BeautifulSoup(response.content, 'html.parser')
 
-        # --- UPDATED SELECTORS FOR DARAZ ---
+        # Selectors for Daraz based on your provided HTML structure
         # Product card: div with class "Bm3ON"
         # Product name: a tag inside a div with class "RfADt"
-        # Price: span with class "ooOxS" inside a div with class "aBrP0"
+        # Price: span with class "ooOxS"
         # Link: href attribute of the product name a tag
 
         # Find the first product card
@@ -75,39 +75,40 @@ def scrape_chaldal(product_name):
     st.info(f"Searching Chaldal for '{product_name}' using Selenium (this might take a moment)...")
     search_url = f"https://chaldal.com/search/{product_name.replace(' ', '%20')}"
 
-    # Set up Selenium WebDriver
+    # Set up Selenium WebDriver options for headless execution
     options = webdriver.ChromeOptions()
     options.add_argument('--headless') # Run in headless mode (no browser UI)
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--disable-gpu')
-    options.add_argument('--window-size=1920,1080')
+    options.add_argument('--no-sandbox') # Required for running in Docker/Linux environments
+    options.add_argument('--disable-dev-shm-usage') # Overcomes limited resource problems
+    options.add_argument('--disable-gpu') # Applicable for older systems or some cloud environments
+    options.add_argument('--window-size=1920,1080') # Set a consistent window size
     options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
 
-    # For Streamlit Cloud, the path to chromedriver is typically /usr/bin/chromedriver
-    # For local, you might need to specify the path or use webdriver_manager (install it first: pip install webdriver-manager)
+    driver = None # Initialize driver to None for finally block
     try:
-        # Check if running on Streamlit Cloud or locally
+        # Streamlit Cloud typically has chromedriver at /usr/bin/chromedriver
+        # For local development, you'd usually install webdriver_manager or place chromedriver in PATH.
+        # This conditional check helps adapt to the environment.
         if "STREAMLIT_SERVER_PORT" in os.environ:
+            # Running on Streamlit Cloud
             driver = webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=options)
         else:
-            # For local development, you might need to download chromedriver
-            # and specify its path, or use webdriver_manager
-            # from webdriver_manager.chrome import ChromeDriverManager
-            # driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-            # As a fallback, assuming chromedriver is in PATH or current directory for simplicity
+            # Running locally - assuming chromedriver is in PATH or current directory
+            # For robust local setup, consider `from webdriver_manager.chrome import ChromeDriverManager; driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)`
             driver = webdriver.Chrome(options=options)
 
         driver.get(search_url)
 
-        # Wait for the product card to be present (adjust timeout as needed)
+        # Wait for the product card to be present. Adjust timeout as needed.
+        # Using a more specific selector if possible to ensure the content is loaded.
         WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, 'div.product'))
         )
 
+        # Get the page source after dynamic content has loaded
         soup = BeautifulSoup(driver.page_source, 'html.parser')
 
-        # --- UPDATED SELECTORS FOR CHALDAL ---
+        # Selectors for Chaldal based on your provided HTML structure
         # Product card: div with class "product"
         # Product name: div with class "name"
         # Price: div with class "discountedPrice" or "price" (prefer discounted if available)
@@ -116,7 +117,7 @@ def scrape_chaldal(product_name):
         product_card = soup.find('div', class_='product')
         if product_card:
             name_element = product_card.find('div', class_='name')
-            # Chaldal has both 'discountedPrice' and 'price'. We'll try to get the active/discounted one first.
+            # Chaldal has both 'discountedPrice' and 'price'. Try to get the active/discounted one first.
             price_element = product_card.find('div', class_='discountedPrice') or product_card.find('div', class_='price')
             link_element = product_card.find('a', class_='btnShowDetails')
 
@@ -138,17 +139,17 @@ def scrape_chaldal(product_name):
             return None
 
     except TimeoutException:
-        st.error("Chaldal: Page loading timed out. Product data might not have appeared.")
+        st.error("Chaldal: Page loading timed out. Product data might not have appeared within the given time.")
         return None
     except WebDriverException as e:
-        st.error(f"Chaldal: WebDriver error. Make sure ChromeDriver is installed and accessible. Error: {e}")
+        st.error(f"Chaldal: WebDriver error. This often means ChromeDriver is not correctly set up or accessible. Error: {e}")
         return None
     except Exception as e:
         st.error(f"An unexpected error occurred while scraping Chaldal: {e}")
         return None
     finally:
-        if 'driver' in locals() and driver:
-            driver.quit() # Always close the browser
+        if driver:
+            driver.quit() # Always close the browser to free up resources
 
 def scrape_swapno(product_name):
     """
@@ -165,11 +166,11 @@ def scrape_swapno(product_name):
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
 
-        # --- UPDATED SELECTORS FOR SWAPNO ---
+        # Selectors for Swapno based on your provided HTML structure
         # Product card: div with class "product-box"
         # Product name: a tag inside a div with class "product-box-title"
-        # Price: span with class "active-price" inside a div with class "product-price"
-        # Link: href attribute of the product name a tag
+        # Price: span with class "active-price"
+        # Link: href attribute of the product-box-gallery a tag
 
         product_card = soup.find('div', class_='product-box')
         if product_card:
@@ -268,21 +269,20 @@ st.info(
     You will need to regularly update the CSS selectors within the `scrape_daraz`, `scrape_chaldal`,
     and `scrape_swapno` functions by inspecting the websites' HTML.
 
-    **Special Note for Chaldal (Selenium):**
-    Chaldal uses dynamic content loading, requiring Selenium. This means:
-    -   **Local Setup:** You need to have a Chrome browser installed and download the corresponding `chromedriver` executable.
-        Place `chromedriver` in a directory that's in your system's PATH, or specify its full path in the `Service()` constructor within `scrape_chaldal`.
-        (e.g., `service=Service('/path/to/your/chromedriver')`).
-    -   **Streamlit Cloud Deployment:** Streamlit Cloud environments usually have `chromedriver` pre-installed at `/usr/bin/chromedriver`,
-        which is why the code includes `service=Service("/usr/bin/chromedriver")`. If you encounter issues,
-        you might need to consult Streamlit's documentation on deploying apps with Selenium.
+    **Special Note for Chaldal (Selenium & Deployment):**
+    Chaldal uses dynamic content loading, requiring Selenium. The `WebDriver error` you encountered
+    (`Status code 127`) on Streamlit Cloud means that the underlying system libraries required by
+    `chromedriver` are missing.
+
+    To make this work on Streamlit Cloud, you need to add a `packages.txt` file to your GitHub repository.
+    This file tells Streamlit Cloud to install these necessary system packages.
     """
 )
 st.markdown(
     """
-    **How to Deploy on Streamlit Cloud (Free):**
-    1.  Save this code as `app.py` in a new GitHub repository.
-    2.  Create a `requirements.txt` file in the same repository with the following content:
+    **How to Deploy on Streamlit Cloud (Free) - Revised Steps:**
+    1.  **Save this code** as `app.py` in a new GitHub repository.
+    2.  **Create a `requirements.txt` file** in the same repository with the following content:
         ```
         streamlit
         requests
@@ -290,10 +290,18 @@ st.markdown(
         pandas
         selenium
         ```
-    3.  Go to [Streamlit Cloud](https://share.streamlit.io/).
-    4.  Sign in with your GitHub account.
-    5.  Click "New app" and select your repository and the `app.py` file.
-    6.  Click "Deploy!" and your app will be live and free.
+    3.  **Create a `packages.txt` file** in the same repository with the following content:
+        ```
+        libglib2.0-0
+        libnss3
+        libgconf-2-4
+        libfontconfig1
+        ```
+        *This `packages.txt` file is crucial for `chromedriver` to run correctly on Streamlit Cloud.*
+    4.  **Push both `app.py`, `requirements.txt`, and `packages.txt`** to your GitHub repository.
+    5.  Go to [Streamlit Cloud](https://share.streamlit.io/).
+    6.  Sign in with your GitHub account.
+    7.  Click "New app" and select your repository and the `app.py` file.
+    8.  Click "Deploy!" and your app will be live and free.
     """
 )
-
